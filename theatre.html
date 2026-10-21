@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Living Room Theatre</title>
+<style>
+:root{--bg:#1b1322;--panel:#271a30;--ink:#f3ead8;--mute:#b3a5b8;--brass:#e0a93f;--red:#a3223f;--line:#3d2b49}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Georgia,"Times New Roman",serif;min-height:100vh}
+h1{font-size:clamp(2rem,6vw,3.4rem);margin:0 0 .4rem;letter-spacing:.01em;font-weight:700}
+main{max-width:1100px;margin:0 auto;padding:28px 16px}
+.sub{color:var(--mute);margin:0 0 24px;max-width:60ch}
+button,input{font:inherit}
+button{background:var(--brass);color:#2a1a05;border:0;border-radius:6px;padding:10px 18px;font-weight:700;cursor:pointer}
+button.alt{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,video:focus-visible{outline:3px solid var(--brass);outline-offset:2px}
+input[type=text]{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:10px 12px;width:100%}
+.hide{display:none!important}
+.choose{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.door{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}
+.door h2{margin:0 0 6px;font-size:1.25rem}
+.door p{color:var(--mute);margin:0 0 14px}
+.stage{display:grid;gap:16px;grid-template-columns:minmax(0,1fr) 300px}
+@media(max-width:800px){.stage{grid-template-columns:1fr}}
+.screen{background:#000;border:2px solid var(--red);border-radius:6px;overflow:hidden;aspect-ratio:16/9;display:flex}
+video{width:100%;height:100%;background:#000}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:12px}
+.link{display:flex;gap:8px;margin-top:12px}
+.side{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;height:min(520px,70vh)}
+.side h3{margin:0 0 8px;font-size:1rem}
+#log{flex:1;overflow:auto;font-size:.92rem;margin-bottom:8px}
+#log p{margin:0 0 6px}#log b{color:var(--brass)}
+.status{color:var(--mute);font-size:.92rem;margin-top:10px}
+.note{color:var(--mute);font-size:.85rem;margin-top:22px;max-width:70ch}
+select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:8px}
+</style>
+</head>
+<body>
+<main>
+  <h1>Living Room Theatre</h1>
+  <p class="sub">Pick a movie from your own device, share a link, and friends watch it live in their browsers. No upload, no account.</p>
+
+  <section id="home" class="choose">
+    <div class="door">
+      <h2>Host a screening</h2>
+      <p>Choose a video file of any size. It plays from your device and streams to your guests.</p>
+      <input type="text" id="hostName" placeholder="Your name" value="Host" aria-label="Your name">
+      <p></p>
+      <button id="hostBtn">Open the theatre</button>
+    </div>
+    <div class="door">
+      <h2>Have a party link?</h2>
+      <p>Open the link your host sent you. It joins automatically.</p>
+    </div>
+  </section>
+
+  <section id="room" class="hide">
+    <div class="stage">
+      <div>
+        <div class="screen"><video id="v" playsinline></video></div>
+        <div id="hostTools" class="hide">
+          <div class="bar">
+            <input type="file" id="file" accept="video/*,.mkv" class="hide">
+            <button id="pick">Choose movie</button>
+            <button class="alt" id="back10">−10s</button>
+            <button class="alt" id="fwd10">+10s</button>
+            <label>Speed <select id="speed"><option>0.75</option><option selected>1</option><option>1.25</option><option>1.5</option></select></label>
+          </div>
+          <div class="link">
+            <input type="text" id="partyLink" readonly aria-label="Party link">
+            <button id="copy">Copy link</button>
+          </div>
+        </div>
+        <button id="joinPlay" class="hide" style="margin-top:12px">Tap to start watching</button>
+        <div class="status" id="status"></div>
+      </div>
+      <aside class="side">
+        <h3 id="who">In the room</h3>
+        <div id="log" aria-live="polite"></div>
+        <input type="text" id="msg" placeholder="Say something and press Enter" aria-label="Chat message">
+      </aside>
+    </div>
+  </section>
+
+  <p class="note">The movie is streamed straight from the host's device, so the host must keep this tab open and use Chrome, Edge or Firefox on a laptop or desktop. Pause, seek and speed on the host's player are mirrored to every guest. Each guest uses a share of the host's upload speed, so 4 to 6 guests is a good size.</p>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const v = $('v');
+const roomId = location.hash.slice(1);
+let peer, name = 'Guest', conns = [], calls = [], isHost = false;
+
+function say(who, text){
+  const p = document.createElement('p');
+  const b = document.createElement('b'); b.textContent = who + ': ';
+  p.append(b, document.createTextNode(text));
+  $('log').append(p); $('log').scrollTop = 1e9;
+}
+function note(text){ const p=document.createElement('p'); p.style.color='var(--mute)'; p.textContent=text; $('log').append(p); $('log').scrollTop=1e9; }
+function show(){ $('home').classList.add('hide'); $('room').classList.remove('hide'); }
+
+/* ---------- HOST ---------- */
+$('hostBtn').onclick = () => {
+  name = $('hostName').value.trim() || 'Host';
+  isHost = true; show();
+  $('hostTools').classList.remove('hide');
+  v.controls = true;
+  const id = 'theatre-' + Math.random().toString(36).slice(2, 8);
+  peer = new Peer(id);
+  peer.on('open', () => {
+    $('partyLink').value = location.href.split('#')[0] + '#' + id;
+    $('status').textContent = 'Theatre open. Choose a movie, then share the link.';
+  });
+  peer.on('error', e => $('status').textContent = 'Connection problem: ' + e.type);
+  peer.on('connection', c => {
+    conns.push(c);
+    c.on('open', () => { c.send({t:'hello', n:name}); streamTo(c.peer); });
+    c.on('data', d => {
+      if (d.t === 'chat'){ say(d.n, d.m); conns.forEach(o => o !== c && o.open && o.send(d)); }
+      if (d.t === 'name'){ c.guestName = d.n; note(d.n + ' joined'); }
+    });
+    c.on('close', () => { conns = conns.filter(o => o !== c); note((c.guestName||'A guest') + ' left'); });
+  });
+};
+$('pick').onclick = () => $('file').click();
+$('file').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  v.src = URL.createObjectURL(f);
+  $('status').textContent = 'Loaded: ' + f.name + '. Press play when everyone has joined.';
+  v.addEventListener('playing', () => conns.forEach(c => streamTo(c.peer)), {once:true});
+};
+function streamTo(pid){
+  if (!v.src) return;
+  const s = v.captureStream ? v.captureStream() : v.mozCaptureStream();
+  calls = calls.filter(c => { if (c.peer === pid){ c.close(); return false; } return true; });
+  calls.push(peer.call(pid, s));
+}
+$('back10').onclick = () => v.currentTime -= 10;
+$('fwd10').onclick = () => v.currentTime += 10;
+$('speed').onchange = e => v.playbackRate = +e.target.value;
+$('copy').onclick = async () => { try { await navigator.clipboard.writeText($('partyLink').value); $('copy').textContent='Copied'; } catch { $('partyLink').select(); } };
+
+/* ---------- GUEST ---------- */
+if (roomId){
+  name = prompt('Your name for the chat?') || 'Guest';
+  show(); v.controls = false; v.muted = true;
+  $('status').textContent = 'Connecting to the theatre…';
+  peer = new Peer();
+  peer.on('error', e => $('status').textContent = 'Could not reach the host (' + e.type + '). Check the link and that the host is online.');
+  peer.on('open', () => {
+    const c = peer.connect(roomId, {reliable:true});
+    conns = [c];
+    c.on('open', () => { c.send({t:'name', n:name}); $('status').textContent = 'Connected. Waiting for the host to press play…'; });
+    c.on('data', d => { if (d.t === 'chat') say(d.n, d.m); if (d.t === 'hello') note('Hosted by ' + d.n); });
+    c.on('close', () => $('status').textContent = 'The host left the theatre.');
+  });
+  peer.on('call', call => {
+    call.answer();
+    call.on('stream', s => {
+      v.srcObject = s; v.play().catch(()=>{});
+      $('status').textContent = 'Watching live.';
+      $('joinPlay').classList.remove('hide');
+    });
+  });
+  $('joinPlay').onclick = () => { v.muted = false; v.controls = false; v.play(); $('joinPlay').classList.add('hide'); };
+}
+
+/* ---------- CHAT ---------- */
+$('msg').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !$('msg').value.trim()) return;
+  const d = {t:'chat', n:name, m:$('msg').value.trim()};
+  say('You', d.m); $('msg').value = '';
+  conns.forEach(c => c.open && c.send(d));
+});
+</script>
+</body>
+</html>
